@@ -7,9 +7,7 @@ parts_of_speech_opencorpora = {'POST': 'NI', 'NOUN': 'S', 'ADJF': 'A', 'ADJS': '
                                'NPRO': 'NI', 'PRED': 'NI', 'PREP': 'PR', 'CONJ': 'CONJ', 'PRCL': 'ADV',
                                'INTJ': 'ADV', 'Prnt': 'ADV'}
 
-# read from xml with lxml
-
-opencorpora_file = "files/dict.opcorpora.xml"
+opencorpora_dict_file = "files/dict.opcorpora.xml"
 
 
 class DictionaryEntry:
@@ -28,17 +26,34 @@ opencorpora_dictionary = {}
 
 propositions = ['посереди', 'посреди', 'прежде', 'против', 'сверху', 'снизу', 'согласно', 'спереди', 'супротив', 'у',
                 'благодаря', 'вблизи', 'вдоль', 'взамен', 'включая', 'вне', 'внутри', 'внутрь', 'во', 'возле', 'вокруг',
-                'до', 'из', 'на', 'напротив', 'о', 'около', 'под', 'подле', 'подобно']
+                'до', 'из', 'на', 'напротив', 'о', 'около', 'под', 'подле', 'подобно', 'для']
+
 conjunctions = ['и', 'а', 'абы', 'али', 'будто', 'ведь', 'да', 'или', 'иначе', 'кабы', 'как', 'когда', 'но',
                 'однако', 'отчего', 'пока', 'покуда', 'причем', 'хотя', 'хоть']
 
 particles = ['аж', 'ан', 'всего', 'все-таки', 'даже', 'ж', 'же', 'ишь', 'ладно', 'ли', 'лишь', 'ль', 'мол', 'нет',
-             'нешто', 'ни', 'пускай', 'пусть', 'разве', 'так', 'так-то', 'того', 'эк']
+             'нешто', 'ни', 'пускай', 'пусть', 'разве', 'так', 'так-то', 'того', 'эк', 'только']
+
+adjectives_endings = {'ый': 'ый', 'ий': 'ий', 'ая': 'ая', 'яя': 'яя', 'ое': 'ое', 'ее': 'ее', 'ые': 'ые',
+                      'ие': 'ие', 'ого': 'ый',  # it's not always this one but we're making a guess
+                      'его': 'ий', 'ой': 'ая', 'ей': 'яя', 'ых': 'ые', 'их': 'ие',
+                      'ому': 'ый', 'ему': 'ий', 'ым': 'ый', 'им': 'ий', 'ую': 'ая', 'юю': 'яя',
+                      'ыми': 'ый', 'ими': 'ий',
+                      'ом': 'ый', 'ем': 'ий'}
+
+verb_endings = {'ить': 'ить', 'ать': 'ать', 'ять': 'ять', 'оть': 'оть', 'уть': 'уть', 'ыть': 'ыть', 'еть': 'еть',
+                'ем': 'ть', 'ешь': 'ть', 'ете': 'ть', 'ет': 'ть', 'им': 'ить', 'ишь': 'ить', 'ите': 'ить',
+                'ит': 'ить', 'ят': 'ить', 'ла': 'ть', 'ал': 'ать', 'ил': 'ить', 'ел': 'еть', 'ыл': 'ыть',
+                'ял': 'ять', 'ол': 'оть', 'ул': 'уть', 'ло': 'ть', 'ли': 'ть'}
+
+vowels = ['а', 'я', 'и', 'е', 'о', 'ы', 'ю', 'ё', 'я', 'у']
+
 verb_on_hold = None
+previous_adjective = None
 
 
 def get_special_token(word):
-    lowercase_word = word.lower()
+    lowercase_word = word.lower().replace('ё', 'е')
     if lowercase_word in propositions:
         return word + "{" + f"{lowercase_word}=PR" + "}"
     elif lowercase_word in conjunctions:
@@ -48,8 +63,24 @@ def get_special_token(word):
     return None
 
 
-def parse_xml():
-    context = et.iterparse(opencorpora_file, tag='lemma')
+def guess_grammeme(word):
+    lowercase_word = word.lower().replace('ё', 'е')
+
+    if lowercase_word[-2:] in adjectives_endings or lowercase_word[-3:] in adjectives_endings:
+        ending = lowercase_word[-2:] if lowercase_word[-2:] in adjectives_endings else lowercase_word[-3:]
+        stemmed = lowercase_word[-2:] if lowercase_word[-2:] in adjectives_endings else lowercase_word[-3:]
+        return word + "{" + f"{stemmed + adjectives_endings[ending]}=A" + "}"
+    if lowercase_word[-2:] in verb_endings or lowercase_word[-3:] in verb_endings:
+        ending = lowercase_word[-2:] if lowercase_word[-2:] in verb_endings else lowercase_word[-3:]
+        stemmed = lowercase_word[-2:] if lowercase_word[-2:] in verb_endings else lowercase_word[-3:]
+        return word + "{" + f"{stemmed + verb_endings[ending]}=V" + "}"
+    if lowercase_word[-1:] in vowels or lowercase_word[-1:] == "ь":
+        return word + "{" + f"{lowercase_word}=S" + "}"
+    return None
+
+
+def parse_xml_dict():
+    context = et.iterparse(opencorpora_dict_file, tag='lemma')
 
     for (_, elem) in context:
         text = elem[0].attrib['t'].lower().replace('ё', 'е')
@@ -67,28 +98,40 @@ def parse_xml():
                 part_of_speech = parts_of_speech_opencorpora[part_of_speech]
                 if text not in opencorpora_dictionary:
                     opencorpora_dictionary[text] = DictionaryEntry(text, text, part_of_speech)
+                for i in range(1, len(elem)):
+                    key = elem[i].attrib['t'].replace('ё', 'е')
+                    if key not in opencorpora_dictionary:
+                        opencorpora_dictionary[key] = DictionaryEntry(key, key, part_of_speech)
                 for i in range(1, len(verb_on_hold)):
                     key = verb_on_hold[i].attrib['t'].replace('ё', 'е')
                     if key not in opencorpora_dictionary:
-                        opencorpora_dictionary[key] = \
-                            DictionaryEntry(key, text, part_of_speech)
+                        opencorpora_dictionary[key] = DictionaryEntry(key, text, part_of_speech)
                 verb_on_hold.clear()
                 verb_on_hold = None
                 elem.clear()
                 continue
 
+        if part_of_speech == 'CONJ':
+            if len(elem[0]) > 1 and elem[0][1].attrib['v'] == 'Prnt':
+                part_of_speech = 'Prnt'
+
+        global previous_adjective
+        if part_of_speech == 'ADJF':
+            previous_adjective = text
+        original_form = previous_adjective if part_of_speech == 'COMP' and previous_adjective is not None else text
+
         part_of_speech = parts_of_speech_opencorpora[part_of_speech]
         if text not in opencorpora_dictionary:
-            opencorpora_dictionary[text] = DictionaryEntry(text, text, part_of_speech)
+            opencorpora_dictionary[text] = DictionaryEntry(text, original_form, part_of_speech)
         for i in range(1, len(elem)):
             key = elem[i].attrib['t'].replace('ё', 'е')
             if key not in opencorpora_dictionary:
-                opencorpora_dictionary[key] = DictionaryEntry(key, text, part_of_speech)
+                opencorpora_dictionary[key] = DictionaryEntry(key, original_form, part_of_speech)
 
         elem.clear()
 
 
-parse_xml()
+parse_xml_dict()
 
 
 def get_token(word):
@@ -101,6 +144,8 @@ def get_token(word):
             processed_word = processed_word[2:]
             if processed_word in opencorpora_dictionary:
                 token = opencorpora_dictionary[processed_word].token(word)
+    if token is None:
+        token = guess_grammeme(word)
     if token is None:
         token = word + "{" + f"{processed_word}=NI" + "}"
     return token
